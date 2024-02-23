@@ -8,7 +8,7 @@ const server = createServer(app);
 const io = new Server(server);
 const PORT = 4000;
 
-
+// allow cors origin requests
 app.use(cors());
 
 app.get('/', (req, res) => {
