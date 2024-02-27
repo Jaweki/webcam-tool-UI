@@ -1,135 +1,257 @@
-import { useEffect, useState } from "react"
-import { FFmpeg } from '@ffmpeg/ffmpeg'
+import { useEffect, useRef, useState } from "react";
 import io from 'socket.io-client';
 
-function VideoConferencingTool() {
-    const [socket, setSocket] = useState(null);
-    const [webCapturing, setWebCapturing] = useState(false);
-    const [streamObj, setStreamObj] = useState(null);
+// eslint-disable-next-line react/prop-types
+function VideoConferencingTool({ toolAction, roomId }) {
+   const [videoElements, setVideoElements] = useState([{}]);
+   const videoelementsRefs = useRef([]);
+   const videoSectionRef = useRef(null);
+   const rtcConfiguration = {
+    iceServers: [
+        // STUN servers
+        { 
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun.ekiga.net',
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302',
+            ]    
+        }
+    ]
+   }
 
-    const ffmpegClient = new FFmpeg({ log: true }); // transcoding before sending to backend
-    const ffmpegServer = new FFmpeg({ log: true }); // transcoding when recived from backend
-    
+//    Creating RTCPeerConnections and attaching the media streams to video elements
+
     useEffect(() => {
-        try {
-            const socket = io('ws://localhost:5001', {
+        const socket = io('https://webcam-tool-backend-96262bb3e455.herokuapp.com', {
             ackTimeout: 10000,
             retries: 3,
-        });
+            autoConnect: false,
+        })
 
-        socket.connect();
+        socket.connect()
 
-        socket.on('connect', () => {
-            console.log('Socket connected');
-        });
+        socket.on("connect", async () => {
+            console.log("UI has connected to web_socket successfully")
+            
+            const uuid = Math.floor(Math.random() * 100000)
+
+            if (toolAction === "create_call") {
+                console.log(" a call...")
+                socket.emit("set_caller_id", uuid)
+                
+                await createPeerConncetion(socket);
+            } else if (toolAction === "receive_call") {
+                console.log("receiveing a call...")
+                await joinPeerConnection(socket)
+            } else {
+                console.log("Tool action not defined wheather to call or recive a call")
+            }
+        })
+
+        socket.on("disconnect", () => {
+            console.log("UI has disconnected from web_socket")
+        })
     
-        socket.on('disconnect', () => {
-            console.log('Socket disconnected');
-        });
-    
-        setSocket(socket);
-    
+        // when this component unmounts
         return () => {
-            // Clean up socket connection on component unmount
-            socket.disconnect();
-        };
-
-        } catch (error) {
-            console.log('failed to make socket connection: ', error);
+            // disconnect from socket
+            socket.disconnect()
         }
-        
-    }, []);
+    }, [])
 
-    async function getCameraFeed() {
-        const videoElement = document.getElementById("videoElement");
-
+    const createPeerConncetion = async (signalingSocket) => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            setStreamObj(stream);
-            videoElement.srcObject = stream;
+            // This function is when the User of this ui wants to start a peer connection offer
+            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true})
 
-            // without transcoding
-            await ffmpegClient.load();
-           ffmpegClient.writeFile()
+            // attach the media stream to the first video element in the DOM
+            const callerVideoElement = document.getElementById("video_element_0")
+            callerVideoElement.srcObject = mediaStream
 
-            const transcoder = ffmpegClient.createTranscoder();
-            transcoder.input({ type: 'video', stream: stream})
-            transcoder.output({ type: "mpegts" })
-            transcoder.run()
+            // initialize a peer connection object
+            const peerConncetion = new RTCPeerConnection(rtcConfiguration)
 
-            transcoder.on('data', (data) => {
-                socket.emit('video_data', data);
+            peerConncetion.onicecandidateerror = (event) => {
+                console.log("Error finding icecandidate: ", event)
+            }
+
+            // send discovered icecandiates to signalling server
+            peerConncetion.onicecandidate = (event) => {
+                if (event.candidate) {
+                    const iceCandidateObj = event.candidate;
+
+                    console.log("New Ice candidate found: ", iceCandidateObj)
+
+                    signalingSocket.emit("set_caller_icecandidate", iceCandidateObj)
+                } else {
+                    console.log("No more Ice candidates")
+                }
+            }
+
+            // attach the media stream and hence the track of this session creator to the peer connection object
+            mediaStream.getTracks().forEach(track => {
+                console.log("found a media track: ", track.kind);
+                peerConncetion.addTrack(track)
             })
 
-            getVideoFeed();
+            // Define media constraints
+            const mediaConstraints = {};
+
+            // Create an SDP offer
+            peerConncetion.createOffer(mediaConstraints).then(sdpOffer => {
+                
+                // store the created SDP offer as local session description
+                peerConncetion.setLocalDescription(sdpOffer);
+                
+                if (signalingSocket.connected) {
+                    // send caller SDP offer to signalling server
+                    signalingSocket.emit("caller_sdp_offer", sdpOffer);
+                } else {
+                    console.log("socket not connected trying to reconnect")
+                    signalingSocket.connect()
+                    
+                    signalingSocket.on("connect", () => {
+                        console.log("socket reconnected; trying to send new sdp Offer")
+                        signalingSocket.emit("caller_sdp_offer", sdpOffer)
+                    })
+
+                }
+                console.log("new sdp offer: ", sdpOffer)
+            })
+
+            // listen for incomming answer and set the answer as a remote description
+            signalingSocket.on("caller_awaited_sdp_answer", (sdp_answer) => {
+                peerConncetion.setRemoteDescription(sdp_answer)
+
+                // add a new video element waiting to be updated with the remote stream
+                setVideoElements([...videoElements, {}]);
+
+                // peer connection instance add event handler for when remote stream is available
+                peerConncetion.on("stream", (remoteMediaStream) => {
+                    // apply remote media stream to the newlly created video element
+                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+
+                    calleeVideoElement.srcObject = remoteMediaStream
+                })
+            })
+
+
+
         } catch (error) {
-            console.log(error);
-            alert("Failed to get camera feed");
+            console.log("Error while creating Caller peerConnection: ", error)
         }
     }
 
-    async function stopCameraFeed() {
+    const joinPeerConnection = async (signalingSocket) => {
+        // This function is when the user of this ui wants to join a peer connection offer
+
         try {
-            await streamObj.getVideoTracks().forEach(track => track.stop()); // stops the camera from recoding video
-
-            const videoElement = document.getElementById("videoElement");
-            videoElement.srcObject = null;
-
-            alert("Camera feed switched off successfully.");
-
-        } catch (error) {
-            console.log(error);
-            alert("Failed to gracefully stop the camera feed");
-        }
-    }
-
-    const getVideoFeed = async() => {
-        const webConference = document.getElementById("conferenceVideo");
+            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio:true })
     
-        await ffmpegServer.load()
+            // attach the media stream to the first video element in the DOM
+            const calleeVideoElement = document.getElementById("video_element_0")
+            calleeVideoElement.srcObject = mediaStream
+    
+            // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
+            const peerConncetion =  new RTCPeerConnection(rtcConfiguration)
 
-        const transcoder = ffmpegServer.createTranscoder()
+            mediaStream.getTracks().forEach(track => {
+                peerConncetion.addTrack(track)
+            })
 
-        // at the moment no transcoding
-        socket.on("broadcast_data", (videoChunk) => {
-            transcoder.input({ type: "mpegts" })
-            transcoder.output({ type: 'video', stream: videoChunk})
-            transcoder.run()
-        });
+            const mediaConstraints = {}
+            
+            signalingSocket.emit("request_caller_sdp_offer", roomId)
 
-        transcoder.on('data', (data) => {
-            webConference.playsInline = true;
-            webConference.srcObject = data;
-        })
-    };
+            signalingSocket.on("available_caller_sdp_offer", (sdp_offer) => {
 
-    // button Onclick handler
-    const handleToggleWebcamMode = async () => {
-        setWebCapturing(!webCapturing);
+                console.log("available caller sdp offer: ", sdp_offer)
+                // Set the callers sdp offer as this callees' remote description
+                peerConncetion.setRemoteDescription(sdp_offer)
 
-        if (!webCapturing) {
-            await getCameraFeed();
-        } else {
-            await stopCameraFeed();
+                // create an answer to generate an sdp answer
+                const sdpAnswer = peerConncetion.createAnswer(mediaConstraints)
+
+                // set the answer as this callees' local description
+                peerConncetion.setLocalDescription(sdpAnswer);
+
+                // send the answer to the signalling server for the caller to associate it as a remote description
+                signalingSocket.emit("callee_sdp_answer", sdpAnswer)
+
+                // add a new video element waiting to be updated with media stream
+                setVideoElements([...videoElements, {}])
+
+                
+                // listen for when there is media stream available from the peer connection
+                peerConncetion.on("stream", (callers_media_stream) => {
+                    console.log("found a remote media stream...", callers_media_stream)
+                    // apply the media stream to the newly created video element
+                    const callerVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+                    
+                    callerVideoElement.srcObject = callers_media_stream
+                    
+                })
+            })
+
+            signalingSocket.emit("request_caller_ice_candidates", roomId)
+
+            signalingSocket.on("caller_icecandidates", (RTCIceCandidate_) => {
+                // associate the callers ice candidates with this callee ice candidates
+                peerConncetion.addIceCandidate(RTCIceCandidate_)
+                console.log(RTCIceCandidate_)
+            })
+
+
+            
+            console.log("call received...")
+        } catch (error) {
+            console.log("Failed to join a peer connection: ", error)
         }
+
     }
+
+//    setting up the UI responsible for displaying the video streams
+   useEffect(() => {
+    if (videoElements.length > 4) {
+        const gridColumnscount = Math.ceil(Math.sqrt(videoElements.length));
+        const gridTemplateColumns = `repeat(${gridColumnscount}, 1fr)`
+        videoSectionRef.current.style.gridTemplateColumns = gridTemplateColumns;
+    }
+   }, [videoElements])
+
+   const handleRemoveVideo = () => {
+    if (videoElements.length > 0) {
+        videoelementsRefs.current.pop();
+        setVideoElements(videoElements.slice(0, videoElements.length - 1))
+    }
+   }
 
   return (
-    <div className="w-full h-full flex items-center justify-center">
-        <section className="w-[70%] h-[70%] flex flex-col rounded-b-3xl border-2 border-gray-500">
-            <div className="w-full h-[80%] bg-blue-800 flex">
-                {/* Current user camera feed */}
-                <video id="videoElement" width={300} height={300} autoPlay className="w-[50%] h-full"></video>
-
-                {/* Video feed from backend */}
-                <video id="conferenceVideo" width={300} height={300} autoPlay className="w-[50%] h-full"></video>
-            </div>
-
-            <div className="flex justify-between items-center p-2 h-full">
-                <p className=" text-orange-500 text-2xl w-[50%]">{!webCapturing && "Click Start Stream to activate the webcam and stream video on the blue screen"}</p>
-
-                <button onClick={handleToggleWebcamMode} className=" bg-blue-500 text-white rounded-lg p-3">{webCapturing ? ( <span className=" text-red-600 font-bold">Stop camera feed</span>) : "Start camera Feed"}</button>
-            </div>
+    <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+        <section 
+            ref={videoSectionRef} 
+            className={`w-[70%] h-[70%] gap-2 rounded-b-3xl border-2 border-gray-500 bg-black ${videoElements.length <= 4 ? "items-center justify-center flex flex-wrap" : "grid p-3" }`}
+            >
+            {videoElements.map((_, index) => (
+                <div 
+                key={`video-${index}`}
+                className={` relative ${videoElements.length <= 4 ? "w-[40%] h-[40%]" : "w-full h-full"}`}
+                >
+                    <video
+                        id={`video_element_${index}`}
+                        className={`bg-green-500 object-cover w-full h-full`}
+                        autoPlay
+                    />
+                    <div
+                     className=" absolute inset-0 w-full h-full bg-black bg-opacity-40 flex items-end justify-center opacity-0 hover:opacity-100 transition-all duration-500 text-white" >
+                        video controls
+                    </div>
+                </div>
+            ))}
+        </section>
+        <section  className="flex w-full items-center justify-center">
+            <button onClick={handleRemoveVideo} className="bg-white text-red-500 hover:text-red-600 font-semibold border hover:border-red-600 border-red-500 p-3 rounded-lg transition-colors duration-300" disabled={!(videoElements.length > 1)}>Hung Up this Call</button>
         </section>
     </div>
   )
