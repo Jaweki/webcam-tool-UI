@@ -128,12 +128,17 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 setVideoElements([...videoElements, {}]);
 
                 // peer connection instance add event handler for when remote stream is available
-                peerConncetion.on("stream", (remoteMediaStream) => {
-                    // apply remote media stream to the newlly created video element
-                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
-
-                    calleeVideoElement.srcObject = remoteMediaStream
-                })
+                peerConncetion.ontrack = (event) => {
+                    // apply remote media stream to the newly created video element
+                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`);
+                    
+                    if (event.streams && event.streams[0]) {
+                        calleeVideoElement.srcObject = event.streams[0];
+                    } else {
+                        const remoteMediaStream = new MediaStream([event.track]);
+                        calleeVideoElement.srcObject = remoteMediaStream;
+                    }
+                };
             })
 
 
@@ -184,14 +189,17 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
                 
                 // listen for when there is media stream available from the peer connection
-                peerConncetion.on("stream", (callers_media_stream) => {
-                    console.log("found a remote media stream...", callers_media_stream)
-                    // apply the media stream to the newly created video element
-                    const callerVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+                peerConncetion.ontrack = (event) => {
+                    // apply remote media stream to the newly created video element
+                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`);
                     
-                    callerVideoElement.srcObject = callers_media_stream
-                    
-                })
+                    if (event.streams && event.streams[0]) {
+                        calleeVideoElement.srcObject = event.streams[0];
+                    } else {
+                        const remoteMediaStream = new MediaStream([event.track]);
+                        calleeVideoElement.srcObject = remoteMediaStream;
+                    }
+                };
             })
 
             signalingSocket.emit("request_caller_ice_candidates", roomId)
