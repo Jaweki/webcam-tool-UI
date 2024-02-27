@@ -8,11 +8,14 @@ function App() {
 
   useEffect(() => {
     
-    const url = 'https://webcam-tool-backend-96262bb3e455.herokuapp.com/open-rooms'
-    fetch(url).then(response => {
-      setOpenRooms(JSON.parse(response))
-    })
+    const fetchRoomIds = async () => {
+      const url = 'https://webcam-tool-backend-96262bb3e455.herokuapp.com/open-rooms'
+      const response = await fetch(url);
+      const data = await response.json();
+      setOpenRooms(data);
+    };
 
+    fetchRoomIds();
   }, [])
   return (
     <main className="w-screen h-screen px-10 pt-9">
@@ -22,7 +25,7 @@ function App() {
             key={room}
             className="flex flex-wrap w-[50%]"
           >
-             <input type="text" value={room} className="w-[100px]
+             <input type="text" defaultValue={room} className="w-[100px]
         border border-black outline-none h-8 text-black p-2"/>
           <button onClick={() => { setRoomId(room); setToolAction("receive_call") }} disabled={toolAction !== ""} className=" bg-blue-900 hover:bg-blue-950 transition-colors duration-300 p-3 rounded-lg ">Join Call</button>
           </div>
