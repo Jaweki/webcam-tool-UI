@@ -23,7 +23,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
 //    Creating RTCPeerConnections and attaching the media streams to video elements
 
     useEffect(() => {
-        const socket = io('https://webcam-tool-backend-96262bb3e455.herokuapp.com', {
+        const socket = io('wss://webcam-tool-backend-96262bb3e455.herokuapp.com', {
             ackTimeout: 10000,
             retries: 3,
             autoConnect: false,
@@ -69,6 +69,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
             const callerVideoElement = document.getElementById("video_element_0")
             callerVideoElement.srcObject = mediaStream
 
+            mediaStream.getTracks().some(track => track.muted && (
+                alert("muted track: ", track)
+            ));
+
             // initialize a peer connection object
             const peerConncetion = new RTCPeerConnection(rtcConfiguration)
 
@@ -91,7 +95,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
             // attach the media stream and hence the track of this session creator to the peer connection object
             mediaStream.getTracks().forEach(track => {
-                console.log("found a media track: ", track.kind);
+                track.enabled = true
                 peerConncetion.addTrack(track)
             })
 
@@ -129,16 +133,22 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
                 // peer connection instance add event handler for when remote stream is available
                 peerConncetion.ontrack = (event) => {
-                    // apply remote media stream to the newly created video element
-                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`);
-                    
-                    if (event.streams && event.streams[0]) {
-                        calleeVideoElement.srcObject = event.streams[0];
-                    } else {
-                        const remoteMediaStream = new MediaStream([event.track]);
-                        calleeVideoElement.srcObject = remoteMediaStream;
+                
+                    const index = videoElements.length - 1
+
+                    if (index > 0) {
+                        // apply remote media stream to the newlly created video element
+                        const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+
+                        const remoteMediaStream = new MediaStream();
+                        calleeVideoElement.srcObject = event
+                        calleeVideoElement.setAttribute("autoPlay", "true")
+                        calleeVideoElement.setAttribute("muted", "false")
+
+                        remoteMediaStream.addTrack(event.track)
                     }
-                };
+                }
+                
             })
 
 
@@ -158,10 +168,18 @@ function VideoConferencingTool({ toolAction, roomId }) {
             const calleeVideoElement = document.getElementById("video_element_0")
             calleeVideoElement.srcObject = mediaStream
     
+            mediaStream.getTracks().some(track => track.muted && (
+                alert("muted track: ", track)
+            ));
+
+            // add a new video element waiting to be updated with media stream
+            setVideoElements([...videoElements, {}])
+
             // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
             const peerConncetion =  new RTCPeerConnection(rtcConfiguration)
 
             mediaStream.getTracks().forEach(track => {
+                track.enabled = true
                 peerConncetion.addTrack(track)
             })
 
@@ -184,23 +202,25 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 // send the answer to the signalling server for the caller to associate it as a remote description
                 signalingSocket.emit("callee_sdp_answer", sdpAnswer)
 
-                // add a new video element waiting to be updated with media stream
-                setVideoElements([...videoElements, {}])
-
-                
-                // listen for when there is media stream available from the peer connection
-                peerConncetion.ontrack = (event) => {
-                    // apply remote media stream to the newly created video element
-                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`);
-                    
-                    if (event.streams && event.streams[0]) {
-                        calleeVideoElement.srcObject = event.streams[0];
-                    } else {
-                        const remoteMediaStream = new MediaStream([event.track]);
-                        calleeVideoElement.srcObject = remoteMediaStream;
-                    }
-                };
             })
+
+            
+            // listen for when there is media stream available from the peer connection
+            peerConncetion.ontrack = (event) => {
+                // apply remote media stream to the newly created video element
+                const index = videoElements.length - 1;
+                if (index > 0) {
+                    const callerVideoElement = document.getElementById(`video_element_${index}`);
+    
+                    const remoteMediaStream = new MediaStream();
+                    callerVideoElement.srcObject = remoteMediaStream;
+                    callerVideoElement.setAttribute("autoPlay", "true")
+                    callerVideoElement.setAttribute("muted", "false")
+
+                    remoteMediaStream.addTrack(event.track)
+                }
+                
+            };
 
             signalingSocket.emit("request_caller_ice_candidates", roomId)
 
