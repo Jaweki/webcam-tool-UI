@@ -71,7 +71,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
             callerVideoElement.srcObject = localStream
 
             // initialize a peer connection object
-            const peerConncetion = new RTCPeerConnection(rtcConfiguration)
+            const peerConncetion = new RTCPeerConnection()
 
             peerConncetion.onicecandidateerror = (event) => {
                 console.log("Error finding icecandidate: ", event)
@@ -89,12 +89,6 @@ function VideoConferencingTool({ toolAction, roomId }) {
                     console.log("No more Ice candidates")
                 }
             }
-
-            // attach the local mediastream and hence the track of this session creator to the peer connection object
-            localStream.getTracks().forEach(track => {
-                track.enabled = true
-                peerConncetion.addTrack(track, localStream)
-            })
 
             // Define media constraints
             const mediaConstraints = {};
@@ -124,24 +118,33 @@ function VideoConferencingTool({ toolAction, roomId }) {
             // listen for incomming answer and set the answer as a remote description
             signalingSocket.on("caller_awaited_sdp_answer", (sdp_answer) => {
 
-                console.log("received callee sdp answer: ", sdp_answer)
-                peerConncetion.setRemoteDescription(sdp_answer).then(() => {
-                    // add a new video element waiting to be updated with the remote stream
-                    setVideoElements([...videoElements, {}]);
-                }).then(() => {
-                    // peer connection instance add event handler for when remote stream is available
-                    peerConncetion.ontrack = (event) => {
-                        const index = videoElements.length - 1
-                        if (index > 0) {
-                            // apply remote media stream to the newlly created video element
-                            const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
-                            calleeVideoElement.srcObject = remoteStream
-                            event.streams[0].getTracks().forEach(track => {
-                                remoteStream.addTrack(track)
-                            })
+                if (peerConncetion.signalingState === 'have-remote-offer' || peerConncetion.signalingState === 'stable') {
+                    console.log("received callee sdp answer: ", sdp_answer)
+                    peerConncetion.setRemoteDescription(sdp_answer).then(() => {
+                        // add a new video element waiting to be updated with the remote stream
+                        setVideoElements([...videoElements, {}]);
+
+                        // attach the local mediastream and hence the track of this session creator to the peer connection object
+                        localStream.getTracks().forEach(track => {
+                            track.enabled = true
+                            peerConncetion.addTrack(track, localStream)
+                        })
+                    }).then(() => {
+                        // peer connection instance add event handler for when remote stream is available
+                        peerConncetion.ontrack = (event) => {
+                            console.log("Track event | Caller listening: ", event)
+                            const index = videoElements.length - 1
+                            if (index > 0) {
+                                // apply remote media stream to the newlly created video element
+                                const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+                                calleeVideoElement.srcObject = remoteStream
+                                event.streams[0].getTracks().forEach(track => {
+                                    remoteStream.addTrack(track)
+                                })
+                            }
                         }
-                    }
-                })
+                    })
+                }
             })
 
 
@@ -164,7 +167,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
            
 
             // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
-            const peerConncetion =  new RTCPeerConnection(rtcConfiguration)
+            const peerConncetion =  new RTCPeerConnection()
 
             localStream.getTracks().forEach(track => {
                 track.enabled = true
