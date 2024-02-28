@@ -94,10 +94,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
             const mediaConstraints = {};
 
             // Create an SDP offer
-            peerConncetion.createOffer(mediaConstraints).then(sdpOffer => {
+            peerConncetion.createOffer(mediaConstraints).then( async (sdpOffer) => {
                 
                 // store the created SDP offer as local session description
-                peerConncetion.setLocalDescription(sdpOffer);
+                await peerConncetion.setLocalDescription(sdpOffer);
                 
                 if (signalingSocket.connected) {
                     // send caller SDP offer to signalling server
@@ -184,10 +184,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 // Set the callers sdp offer as this callees' remote description
                 peerConncetion.setRemoteDescription(sdp_offer).then(() => {
                     // create an answer to generate an sdp answer
-                    peerConncetion.createAnswer(mediaConstraints).then((sdpAnswer) => {
+                    peerConncetion.createAnswer(mediaConstraints).then( async (sdpAnswer) => {
 
                         // set the answer as this callees' local description
-                        peerConncetion.setLocalDescription(sdpAnswer);
+                        await peerConncetion.setLocalDescription(sdpAnswer);
 
                         // send the answer to the signalling server for the caller to associate it as a remote description
                         signalingSocket.emit("callee_sdp_answer", sdpAnswer)
