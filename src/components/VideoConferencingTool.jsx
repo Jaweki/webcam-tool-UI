@@ -8,7 +8,6 @@ function VideoConferencingTool({ toolAction, roomId }) {
    const videoSectionRef = useRef(null);
    const rtcConfiguration = {
     iceServers: [
-        // STUN servers
         { 
             urls: [
                 'stun:stun.l.google.com:19302',
@@ -62,6 +61,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
     const createPeerConncetion = async (signalingSocket) => {
         try {
+            
+            // initialize a peer connection object
+            const peerConncetion = new RTCPeerConnection(rtcConfiguration)
+
             // This function is when the User of this ui wants to start a peer connection offer
             const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true})
             const remoteStream = new MediaStream()
@@ -70,8 +73,25 @@ function VideoConferencingTool({ toolAction, roomId }) {
             const callerVideoElement = document.getElementById("video_element_0")
             callerVideoElement.srcObject = localStream
 
-            // initialize a peer connection object
-            const peerConncetion = new RTCPeerConnection()
+             // attach the local mediastream and hence the track of this session creator to the peer connection object
+             localStream.getTracks().forEach(track => {
+                track.enabled = true
+                peerConncetion.addTrack(track, localStream)
+            })
+
+            // peer connection instance add event handler for when remote stream is available
+            peerConncetion.ontrack = (event) => {
+                console.log("Track event | Caller listening: ", event)
+                const index = videoElements.length - 1
+                if (index > 0) {
+                    // apply remote media stream to the newlly created video element
+                    const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+                    calleeVideoElement.srcObject = remoteStream
+                    event.streams[0].getTracks().forEach(track => {
+                        remoteStream.addTrack(track)
+                    })
+                }
+            }
 
             peerConncetion.onicecandidateerror = (event) => {
                 console.log("Error finding icecandidate: ", event)
@@ -82,7 +102,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 if (event.candidate) {
                     const iceCandidateObj = event.candidate;
 
-                    console.log("New Ice candidate found: ", iceCandidateObj)
+                    console.log("New caller Ice candidate found: ", iceCandidateObj)
 
                     signalingSocket.emit("set_caller_icecandidate", iceCandidateObj)
                 } else {
@@ -122,27 +142,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
                     console.log("received callee sdp answer: ", sdp_answer)
                     peerConncetion.setRemoteDescription(sdp_answer).then(() => {
                         // add a new video element waiting to be updated with the remote stream
-                        setVideoElements([...videoElements, {}]);
-
-                        // attach the local mediastream and hence the track of this session creator to the peer connection object
-                        localStream.getTracks().forEach(track => {
-                            track.enabled = true
-                            peerConncetion.addTrack(track, localStream)
-                        })
-                    }).then(() => {
-                        // peer connection instance add event handler for when remote stream is available
-                        peerConncetion.ontrack = (event) => {
-                            console.log("Track event | Caller listening: ", event)
-                            const index = videoElements.length - 1
-                            if (index > 0) {
-                                // apply remote media stream to the newlly created video element
-                                const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
-                                calleeVideoElement.srcObject = remoteStream
-                                event.streams[0].getTracks().forEach(track => {
-                                    remoteStream.addTrack(track)
-                                })
-                            }
-                        }
+                        setVideoElements([...videoElements, {}]);  
                     })
                 }
             })
@@ -157,6 +157,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
         // This function is when the user of this ui wants to join a peer connection offer
 
         try {
+            
+            // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
+            const peerConncetion =  new RTCPeerConnection(rtcConfiguration)
+
             const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio:true })
             const remoteStream = new MediaStream()
 
@@ -164,26 +168,49 @@ function VideoConferencingTool({ toolAction, roomId }) {
             const calleeVideoElement = document.getElementById("video_element_0")
             calleeVideoElement.srcObject = localStream
 
-           
-
-            // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
-            const peerConncetion =  new RTCPeerConnection()
-
             localStream.getTracks().forEach(track => {
                 track.enabled = true
                 peerConncetion.addTrack(track, localStream)
             })
 
-            const mediaConstraints = {}
+            // listen for when there is media stream available from the peer connection
+            peerConncetion.ontrack = (event) => {
+                // apply remote media stream to the newly created video element
+                const index = videoElements.length - 1;
+                if (index > 0) {
+                    const callerVideoElement = document.getElementById(`video_element_${index}`);
+                
+                    callerVideoElement.srcObject = remoteStream
+                
+                    event.streams[0].getTracks().forEach(track => {
+                        remoteStream.addTrack(track)
+                    })
+                }
+
+            }
+
+            // send discovered icecandiates to signalling server
+            peerConncetion.onicecandidate = (event) => {
+                if (event.candidate) {
+                    const iceCandidateObj = event.candidate;
+
+                    console.log("New callee Ice candidate found: ", iceCandidateObj)
+
+                    signalingSocket.emit("set_callee_icecandidate", iceCandidateObj)
+                } else {
+                    console.log("No more Ice candidates")
+                }
+            }
             
             signalingSocket.emit("request_caller_sdp_offer", roomId)
-
+            
             signalingSocket.on("available_caller_sdp_offer", (sdp_offer) => {
-
+                
                 console.log("available caller sdp offer: ", sdp_offer)
                 // Set the callers sdp offer as this callees' remote description
                 peerConncetion.setRemoteDescription(sdp_offer).then(() => {
                     // create an answer to generate an sdp answer
+                    const mediaConstraints = {}
                     peerConncetion.createAnswer(mediaConstraints).then( async (sdpAnswer) => {
 
                         // set the answer as this callees' local description
@@ -194,22 +221,6 @@ function VideoConferencingTool({ toolAction, roomId }) {
                     }).then(() => {
                         // add a new video element waiting to be updated with media stream
                         setVideoElements([...videoElements, {}])
-                    }).then(() => {
-                        // listen for when there is media stream available from the peer connection
-                        peerConncetion.ontrack = (event) => {
-                            // apply remote media stream to the newly created video element
-                            const index = videoElements.length - 1;
-                            if (index > 0) {
-                                const callerVideoElement = document.getElementById(`video_element_${index}`);
-                            
-                                callerVideoElement.srcObject = remoteStream
-                            
-                                event.streams[0].getTracks().forEach(track => {
-                                    remoteStream.addTrack(track)
-                                })
-                            }
-
-                        }
                     })
                 })
 
