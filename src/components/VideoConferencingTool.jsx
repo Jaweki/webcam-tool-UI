@@ -63,15 +63,12 @@ function VideoConferencingTool({ toolAction, roomId }) {
     const createPeerConncetion = async (signalingSocket) => {
         try {
             // This function is when the User of this ui wants to start a peer connection offer
-            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true})
+            const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true})
+            const remoteStream = new MediaStream()
 
             // attach the media stream to the first video element in the DOM
             const callerVideoElement = document.getElementById("video_element_0")
-            callerVideoElement.srcObject = mediaStream
-
-            mediaStream.getTracks().some(track => track.muted && (
-                alert("muted track: ", track)
-            ));
+            callerVideoElement.srcObject = localStream
 
             // initialize a peer connection object
             const peerConncetion = new RTCPeerConnection(rtcConfiguration)
@@ -93,10 +90,10 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 }
             }
 
-            // attach the media stream and hence the track of this session creator to the peer connection object
-            mediaStream.getTracks().forEach(track => {
+            // attach the local mediastream and hence the track of this session creator to the peer connection object
+            localStream.getTracks().forEach(track => {
                 track.enabled = true
-                peerConncetion.addTrack(track)
+                peerConncetion.addTrack(track, localStream)
             })
 
             // Define media constraints
@@ -126,31 +123,25 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
             // listen for incomming answer and set the answer as a remote description
             signalingSocket.on("caller_awaited_sdp_answer", (sdp_answer) => {
-                peerConncetion.setRemoteDescription(sdp_answer)
 
-                // add a new video element waiting to be updated with the remote stream
-                setVideoElements([...videoElements, {}]);
-
-                // peer connection instance add event handler for when remote stream is available
-                peerConncetion.ontrack = (event) => {
-                
-                    const index = videoElements.length - 1
-
-                    if (index > 0) {
-                        // apply remote media stream to the newlly created video element
-                        const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
-
-                        const remoteMediaStream = new MediaStream();
-                        calleeVideoElement.srcObject = event
-                        calleeVideoElement.setAttribute("autoPlay", "true")
-                        calleeVideoElement.setAttribute("muted", "false")
-
-                        remoteMediaStream.addTrack(event.track)
+                peerConncetion.setRemoteDescription(sdp_answer).then(() => {
+                    // add a new video element waiting to be updated with the remote stream
+                    setVideoElements([...videoElements, {}]);
+                }).then(() => {
+                    // peer connection instance add event handler for when remote stream is available
+                    peerConncetion.ontrack = (event) => {
+                        const index = videoElements.length - 1
+                        if (index > 0) {
+                            // apply remote media stream to the newlly created video element
+                            const calleeVideoElement = document.getElementById(`video_element_${videoElements.length - 1}`)
+                            calleeVideoElement.srcObject = remoteStream
+                            event.streams[0].getTracks().forEach(track => {
+                                remoteStream.addTrack(track)
+                            })
+                        }
                     }
-                }
-                
+                })
             })
-
 
 
         } catch (error) {
@@ -162,25 +153,21 @@ function VideoConferencingTool({ toolAction, roomId }) {
         // This function is when the user of this ui wants to join a peer connection offer
 
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio:true })
-    
+            const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio:true })
+            const remoteStream = new MediaStream()
+
             // attach the media stream to the first video element in the DOM
             const calleeVideoElement = document.getElementById("video_element_0")
-            calleeVideoElement.srcObject = mediaStream
-    
-            mediaStream.getTracks().some(track => track.muted && (
-                alert("muted track: ", track)
-            ));
+            calleeVideoElement.srcObject = localStream
 
-            // add a new video element waiting to be updated with media stream
-            setVideoElements([...videoElements, {}])
+           
 
             // instantiate an RTCPeerConncetion object passing ice server urls as rtc configuration
             const peerConncetion =  new RTCPeerConnection(rtcConfiguration)
 
-            mediaStream.getTracks().forEach(track => {
+            localStream.getTracks().forEach(track => {
                 track.enabled = true
-                peerConncetion.addTrack(track)
+                peerConncetion.addTrack(track, localStream)
             })
 
             const mediaConstraints = {}
@@ -194,33 +181,34 @@ function VideoConferencingTool({ toolAction, roomId }) {
                 peerConncetion.setRemoteDescription(sdp_offer)
 
                 // create an answer to generate an sdp answer
-                const sdpAnswer = peerConncetion.createAnswer(mediaConstraints)
+                peerConncetion.createAnswer(mediaConstraints).then((sdpAnswer) => {
 
-                // set the answer as this callees' local description
-                peerConncetion.setLocalDescription(sdpAnswer);
+                    // set the answer as this callees' local description
+                    peerConncetion.setLocalDescription(sdpAnswer);
+                    
+                    // send the answer to the signalling server for the caller to associate it as a remote description
+                    signalingSocket.emit("callee_sdp_answer", sdpAnswer)
+                }).then(() => {
+                    // add a new video element waiting to be updated with media stream
+                    setVideoElements([...videoElements, {}])
+                }).then(() => {
+                    // listen for when there is media stream available from the peer connection
+                    peerConncetion.ontrack = (event) => {
+                        // apply remote media stream to the newly created video element
+                        const index = videoElements.length - 1;
+                        if (index > 0) {
+                            const callerVideoElement = document.getElementById(`video_element_${index}`);
+                        
+                            callerVideoElement.srcObject = remoteStream
+                        
+                            event.streams[0].getTracks().forEach(track => {
+                                remoteStream.addTrack(track)
+                            })
+                        }
 
-                // send the answer to the signalling server for the caller to associate it as a remote description
-                signalingSocket.emit("callee_sdp_answer", sdpAnswer)
-
+                    }
+                })
             })
-
-            
-            // listen for when there is media stream available from the peer connection
-            peerConncetion.ontrack = (event) => {
-                // apply remote media stream to the newly created video element
-                const index = videoElements.length - 1;
-                if (index > 0) {
-                    const callerVideoElement = document.getElementById(`video_element_${index}`);
-    
-                    const remoteMediaStream = new MediaStream();
-                    callerVideoElement.srcObject = remoteMediaStream;
-                    callerVideoElement.setAttribute("autoPlay", "true")
-                    callerVideoElement.setAttribute("muted", "false")
-
-                    remoteMediaStream.addTrack(event.track)
-                }
-                
-            };
 
             signalingSocket.emit("request_caller_ice_candidates", roomId)
 
