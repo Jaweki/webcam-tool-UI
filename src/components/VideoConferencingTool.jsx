@@ -124,6 +124,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
             // listen for incomming answer and set the answer as a remote description
             signalingSocket.on("caller_awaited_sdp_answer", (sdp_answer) => {
 
+                console.log("received callee sdp answer: ", sdp_answer)
                 peerConncetion.setRemoteDescription(sdp_answer).then(() => {
                     // add a new video element waiting to be updated with the remote stream
                     setVideoElements([...videoElements, {}]);
@@ -178,36 +179,37 @@ function VideoConferencingTool({ toolAction, roomId }) {
 
                 console.log("available caller sdp offer: ", sdp_offer)
                 // Set the callers sdp offer as this callees' remote description
-                peerConncetion.setRemoteDescription(sdp_offer)
+                peerConncetion.setRemoteDescription(sdp_offer).then(() => {
+                    // create an answer to generate an sdp answer
+                    peerConncetion.createAnswer(mediaConstraints).then((sdpAnswer) => {
 
-                // create an answer to generate an sdp answer
-                peerConncetion.createAnswer(mediaConstraints).then((sdpAnswer) => {
+                        // set the answer as this callees' local description
+                        peerConncetion.setLocalDescription(sdpAnswer);
 
-                    // set the answer as this callees' local description
-                    peerConncetion.setLocalDescription(sdpAnswer);
-                    
-                    // send the answer to the signalling server for the caller to associate it as a remote description
-                    signalingSocket.emit("callee_sdp_answer", sdpAnswer)
-                }).then(() => {
-                    // add a new video element waiting to be updated with media stream
-                    setVideoElements([...videoElements, {}])
-                }).then(() => {
-                    // listen for when there is media stream available from the peer connection
-                    peerConncetion.ontrack = (event) => {
-                        // apply remote media stream to the newly created video element
-                        const index = videoElements.length - 1;
-                        if (index > 0) {
-                            const callerVideoElement = document.getElementById(`video_element_${index}`);
-                        
-                            callerVideoElement.srcObject = remoteStream
-                        
-                            event.streams[0].getTracks().forEach(track => {
-                                remoteStream.addTrack(track)
-                            })
+                        // send the answer to the signalling server for the caller to associate it as a remote description
+                        signalingSocket.emit("callee_sdp_answer", sdpAnswer)
+                    }).then(() => {
+                        // add a new video element waiting to be updated with media stream
+                        setVideoElements([...videoElements, {}])
+                    }).then(() => {
+                        // listen for when there is media stream available from the peer connection
+                        peerConncetion.ontrack = (event) => {
+                            // apply remote media stream to the newly created video element
+                            const index = videoElements.length - 1;
+                            if (index > 0) {
+                                const callerVideoElement = document.getElementById(`video_element_${index}`);
+                            
+                                callerVideoElement.srcObject = remoteStream
+                            
+                                event.streams[0].getTracks().forEach(track => {
+                                    remoteStream.addTrack(track)
+                                })
+                            }
+
                         }
-
-                    }
+                    })
                 })
+
             })
 
             signalingSocket.emit("request_caller_ice_candidates", roomId)
@@ -215,7 +217,7 @@ function VideoConferencingTool({ toolAction, roomId }) {
             signalingSocket.on("caller_icecandidates", (RTCIceCandidate_) => {
                 // associate the callers ice candidates with this callee ice candidates
                 peerConncetion.addIceCandidate(RTCIceCandidate_)
-                console.log(RTCIceCandidate_)
+                console.log("received caller related ice candidate: ", RTCIceCandidate_)
             })
 
 
